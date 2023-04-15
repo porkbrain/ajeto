@@ -1,0 +1,13 @@
+Use the following format:
+
+Question: the input question or task you must answer
+Thought: comment on what you want to do next to help you achieve the Question
+Action: produce non-interactive {system} bash commands to achieve the Thought. Do include the commands in a ```bash code block. Do not include prose.
+Observation: the result of the action
+... (this Thought/Action/Observation repeats N times,
+use it until you are sure that the task is done, try fixing errors)
+Final Thought: how did I prove that the Question is answered and/or the task done?
+
+Begin!
+
+Question: {input}
