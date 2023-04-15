@@ -9,6 +9,7 @@ pub struct History {
 }
 
 impl History {
+    /// Loads the most recent prompts from the database.
     pub fn from(db: &DbClient) -> Result<Self> {
         let prompts = db::select_prompts(
             db,
@@ -21,6 +22,8 @@ impl History {
         Ok(Self { prompts })
     }
 
+    /// Decides which prompts to include in the LLM request.
+    /// Always includes the content prompt.
     pub fn into_llm_prompt(
         self,
         db: &DbClient,
@@ -29,61 +32,66 @@ impl History {
     ) -> Result<serde_json::Value> {
         let Self { mut prompts } = self;
 
-        if prompts.len() > 2 {
-            let mut total_tokens =
-                content_tokens + prompts.iter().map(|p| p.tokens).sum::<i32>();
-            let max_tokens = setting::max_tokens(db)?;
-            let min_score_to_include_prompt =
-                setting::min_score_to_include_prompt(db)?;
+        let max_tokens = setting::max_tokens(db)?;
+        let min_score_to_include_prompt =
+            setting::min_score_to_include_prompt(db)?;
 
-            let latest_id = *prompts[0].id;
-            let now = Utc::now();
+        // for score calc
+        let ζ = setting::expiring_id_discount(db)?;
+        let τ = setting::expiring_created_at_discount(db)?;
+        let φ = setting::len_discount(db)?;
+        let ξ = setting::karma_multiplier(db)?;
 
-            let expiring_id_discount = setting::expiring_id_discount(db)?;
-            let expiring_created_at_discount =
-                setting::expiring_created_at_discount(db)?;
-            let len_discount = setting::len_discount(db)?;
-            let karma_multiplier = setting::karma_multiplier(db)?;
+        // is ordered by `id` DESC
+        let latest_id = *prompts[0].id;
+        let now = Utc::now();
 
-            let mut scores = prompts
-                .iter()
-                .filter_map(|prompt| {
-                    let elapsed_minutes = now
-                        .signed_duration_since(prompt.created_at())
-                        .num_minutes()
-                        .max(0);
+        // must be kept under `max_tokens`
+        let mut total_tokens =
+            content_tokens + prompts.iter().map(|p| p.tokens).sum::<i32>();
 
-                    let score = score(
-                        prompt,
-                        ScoreEqParams {
-                            elapsed_minutes,
-                            latest_id,
-                            ξ: karma_multiplier,
-                            τ: expiring_created_at_discount,
-                            ζ: expiring_id_discount,
-                            φ: len_discount,
-                        },
-                    );
+        let mut scores = prompts
+            .iter()
+            .filter_map(|prompt| {
+                let elapsed_minutes = now
+                    .signed_duration_since(prompt.created_at())
+                    .num_minutes()
+                    .max(0);
 
-                    if min_score_to_include_prompt > score {
-                        total_tokens -= prompt.tokens;
-                        None
-                    } else {
-                        Some((prompt.id, prompt.tokens, score))
-                    }
-                })
-                .collect::<Vec<_>>();
-            if total_tokens > max_tokens {
-                scores.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a)); // DESC
-            }
-            while total_tokens > max_tokens && scores.len() > 1 {
-                let (_, tokens, _) = scores.pop().unwrap();
-                total_tokens -= tokens;
-            }
-            let prompts_to_include: HashSet<_> =
-                scores.into_iter().map(|(id, _, _)| id).collect();
-            prompts.retain(|p| prompts_to_include.contains(&p.id));
+                let score = score(
+                    prompt,
+                    ScoreEqParams {
+                        elapsed_minutes,
+                        latest_id,
+                        ξ,
+                        τ,
+                        ζ,
+                        φ,
+                    },
+                );
+
+                if min_score_to_include_prompt > score {
+                    total_tokens -= prompt.tokens;
+                    None
+                } else {
+                    Some((prompt.id, prompt.tokens, score))
+                }
+            })
+            .collect::<Vec<_>>();
+
+        if total_tokens > max_tokens {
+            scores.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a)); // DESC
         }
+        // keep removing the lowest scoring prompts until we're under the limit
+        while total_tokens > max_tokens && scores.len() > 1 {
+            let (_, tokens, _) = scores.pop().unwrap();
+            total_tokens -= tokens;
+        }
+
+        // remove all prompts that we decided not to include
+        let prompts_to_include: HashSet<_> =
+            scores.into_iter().map(|(id, _, _)| id).collect();
+        prompts.retain(|p| prompts_to_include.contains(&p.id));
 
         debug!(
             "Included history IDs: {:?}",
