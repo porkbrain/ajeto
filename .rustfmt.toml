@@ -1,0 +1,5 @@
+max_width = 80
+
+# nightly
+wrap_comments = true
+comment_width = 80

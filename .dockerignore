@@ -1,0 +1,5 @@
+# ignore everything by default
+*
+
+# allowlist binaries
+!/target/release/ajetod
