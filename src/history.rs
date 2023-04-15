@@ -17,7 +17,8 @@ pub fn into_llm_prompt(db: &DbClient) -> Result<serde_json::Value> {
         },
     )?;
 
-    let (mut total_tokens, mut scores) = total_tokens_and_scores(db, &prompts)?;
+    let mut scores = scores_above_threshold(db, &prompts)?;
+    let mut total_tokens = scores.iter().map(|(_, t, _)| t).sum::<i32>();
 
     let max_tokens = setting::max_tokens(db)?;
     if total_tokens > max_tokens {
@@ -59,10 +60,12 @@ pub fn into_llm_prompt(db: &DbClient) -> Result<serde_json::Value> {
     ))
 }
 
-fn total_tokens_and_scores(
+/// Returns scores for _some_ of the prompts.
+/// Some are filtered out because their score is under the threshold.
+fn scores_above_threshold(
     db: &DbClient,
     prompts: &[models::Prompt],
-) -> Result<(i32, Vec<(models::PromptId, i32, f32)>)> {
+) -> Result<Vec<(models::PromptId, i32, f32)>> {
     let min_score_to_include_prompt = setting::min_score_to_include_prompt(db)?;
 
     // for score calc
@@ -75,10 +78,7 @@ fn total_tokens_and_scores(
     // is ordered by `id` DESC
     let latest_id = *prompts[0].id;
 
-    // must be kept under `max_tokens`
-    let mut total_tokens = prompts.iter().map(|p| p.tokens).sum::<i32>();
-
-    let scores = prompts
+    Ok(prompts
         .iter()
         .filter_map(|prompt| {
             let elapsed_minutes = now
@@ -99,15 +99,12 @@ fn total_tokens_and_scores(
             );
 
             if min_score_to_include_prompt > score {
-                total_tokens -= prompt.tokens;
                 None
             } else {
                 Some((prompt.id, prompt.tokens, score))
             }
         })
-        .collect::<Vec<_>>();
-
-    Ok((total_tokens, scores))
+        .collect())
 }
 
 struct ScoreEqParams {
