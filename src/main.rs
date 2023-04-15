@@ -16,7 +16,7 @@ mod prelude;
 use mode::Mode;
 use prelude::*;
 use serde_derive::{Deserialize, Serialize};
-use std::convert::Infallible;
+use std::{convert::Infallible, sync::Arc};
 use warp::Filter;
 
 /// Definition of body for `POST /v1`
@@ -34,26 +34,34 @@ async fn main() -> Result<()> {
     let http_addr = conf.http_addr;
     let db = conf.db()?;
 
+    // a dirty hack to make sure that only one request is processed at a time
+    type Sequencer = Arc<tokio::sync::Mutex<()>>;
+
     let recv_route = warp::path!("v1")
         .and(warp::post())
+        .and(with_object(Sequencer::default()))
         .and(with_object(conf))
         .and(with_object(db))
         .and(warp::body::json())
-        .and_then(move |conf, db: DbClient, cmd| async move {
-            let JsonBody { input } = cmd;
-            if let Err(e) = recv(conf, db, input.clone()).await {
-                error!("Cannot process input:\n\n{input}\n\n---\nError: {e}");
-                #[derive(Debug)]
-                struct InternalServerError;
-                impl warp::reject::Reject for InternalServerError {}
-                Err(warp::reject::custom(InternalServerError))
-            } else {
-                Ok(warp::reply())
-            }
-        });
+        .and_then(
+            move |sequencer: Sequencer, conf, db: DbClient, cmd| async move {
+                let _ = sequencer.lock_owned().await;
+                let JsonBody { input } = cmd;
+                if let Err(e) = recv(conf, db, input.clone()).await {
+                    error!(
+                        "Cannot process input:\n\n{input}\n\n---\nError: {e}"
+                    );
+                    #[derive(Debug)]
+                    struct InternalServerError;
+                    impl warp::reject::Reject for InternalServerError {}
+                    Err(warp::reject::custom(InternalServerError))
+                } else {
+                    Ok(warp::reply())
+                }
+            },
+        );
     let routes = recv_route.with(warp::cors().allow_any_origin());
 
-    // TODO: at most one request at a time
     warp::serve(routes).run(http_addr).await;
     Err(anyhow!("Server exited"))
 }
