@@ -1,1 +1,1 @@
-Make sure to run tests single threaded with `--jobs 1` arg.
+Make sure to run tests single threaded with `-- --test-threads=1` arg.
