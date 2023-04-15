@@ -91,6 +91,9 @@ pub async fn process_llm_response(
                 let prompt = include_str!("../../prompts/marat-tao-help.txt")
                     .to_string();
                 let karma = setting::decorative_karma(db)?;
+                // diminish the karma of the invalid prompt
+                db::update_latest_prompt_karma(db, 0)?;
+
                 (prompt, karma)
             };
 
@@ -108,21 +111,27 @@ pub async fn process_llm_response(
 }
 
 fn parse_bash_commands(response: &str) -> Option<String> {
-    let mut lines_iter = response
-        .lines()
-        .map(|l| l.trim())
-        .skip_while(|l| !l.starts_with("Action:") && !l.starts_with("```"));
+    let mut lines_iter =
+        response.lines().map(|l| l.trim()).filter(|l| !l.is_empty());
 
-    let action_line = lines_iter.next()?;
-    if action_line.contains("Action:") {
-        let bash_line = lines_iter.next()?;
-        if !bash_line.contains("```") {
-            return None;
-        }
-    } else if !action_line.contains("```") {
+    // follow the format! start with Thought:
+    if lines_iter.next()?.trim().contains("Thought:") {
         return None;
     }
 
+    let mut lines_iter = lines_iter.skip_while(|l| !l.starts_with("Action:"));
+
+    // next comes Action:
+    if !lines_iter.next()?.trim().contains("Action:") {
+        return None;
+    }
+
+    // and now the bash commands in a code block
+    if !lines_iter.next()?.trim().contains("```") {
+        return None;
+    }
+
+    // exit on first err
     let lines_iter = iter::once("set -e").chain(lines_iter);
     Some(
         lines_iter
