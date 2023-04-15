@@ -1,0 +1,24 @@
+version: "3"
+
+services:
+  ajetod:
+    image: ajetod
+    build:
+      dockerfile: tests/assets/ajetod.Dockerfile
+    ports:
+      - "8080:8080"
+    platform: linux/x86_64
+    restart: always
+    volumes:
+      - type: bind
+        source: .tmp/db
+        target: /var/lib/db
+      - type: bind
+        source: .tmp/home
+        target: /home/ajeto
+    environment:
+      - RUST_LOG=info
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+      - HTTP_ADDR=0.0.0.0:8080
+      - SQL_CONN=/var/lib/db/ajetod.db
+      - USER_HOME_DIR=/home/ajeto
