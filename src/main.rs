@@ -13,7 +13,6 @@ mod openai;
 /// Common imports
 mod prelude;
 
-use crate::history::History;
 use mode::Mode;
 use prelude::*;
 use serde_derive::{Deserialize, Serialize};
@@ -57,6 +56,7 @@ async fn main() -> Result<()> {
         });
     let routes = recv_route.with(warp::cors().allow_any_origin());
 
+    // TODO: at most one request at a time
     warp::serve(routes).run(http_addr).await;
     Err(anyhow!("Server exited"))
 }
@@ -73,14 +73,13 @@ fn with_object<T: Clone + Send>(
 /// Note that the [`Mode`] ultimately decides how the program behaves.
 ///
 /// 1. Processes the input and decides on the [`Mode`] to use
-/// 2. Fetches prompt history from db
-/// 3. Generates the next prompt to be sent to LLM
-/// 4. Stores the next prompt to db history
-/// 5. Generates LLM input (history + next prompt)
-/// 6. Sends the input to LLM
-/// 7. Processes the response
-/// 8. Stores the response to db history
-/// 9. Decides what to do next based on the output of 7., either goto 2. or stop
+/// 2. Generates the next prompt to be sent to LLM
+/// 3. Stores the next prompt to db history
+/// 4. Generates LLM input (history + next prompt)
+/// 5. Sends the input to LLM
+/// 6. Processes the response
+/// 7. Stores the response to db history
+/// 8. Decides what to do next based on the output of 6., either goto 2. or stop
 ///
 ///
 /// * TODO: prompt buffering
@@ -97,14 +96,11 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
     let max_thought_loops = setting::max_thought_loops(&db)?;
     for _ in 0..max_thought_loops {
         // 2.
-        let history = History::from(&db)?;
-
-        // 3.
         let (immediate_prompt, params) = mode.generate_immediate_prompt(&db)?;
         let immediate_prompt_tokens =
             openai::estimate_tokens(&immediate_prompt);
 
-        // 4.
+        // 3.
         db::insert_prompt(
             &db,
             models::NewPrompt {
@@ -116,23 +112,19 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
             },
         )?;
 
-        // 5.
-        let llm_prompt = history.into_llm_prompt(
-            &db,
-            immediate_prompt,
-            immediate_prompt_tokens,
-        )?;
+        // 4.
+        let llm_prompt = history::into_llm_prompt(&db)?;
 
-        // 6.
+        // 5.
         let response =
             openai::respond_to(&conf, &db, params, llm_prompt).await?;
 
-        // 7.
+        // 6.
         let current_mode = mode.as_str();
         let (next_mode, params) =
             mode.process_llm_response(&conf, &db, &response).await?;
 
-        // 8.
+        // 7.
         db::insert_prompt(
             &db,
             models::NewPrompt {
@@ -144,7 +136,7 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
             },
         )?;
 
-        // 9.
+        // 8.
         if let Some(next_mode) = next_mode {
             mode = next_mode;
         } else {
@@ -154,6 +146,3 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
 
     Ok(())
 }
-
-#[cfg(test)]
-mod tests {}

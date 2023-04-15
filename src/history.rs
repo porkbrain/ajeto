@@ -1,121 +1,102 @@
 //! Defines which prompts to include with each LLM request for context.
 
-use crate::prelude::*;
+use crate::{models::PromptId, prelude::*};
 use chrono::Utc;
-use std::{collections::HashSet, iter};
+use std::collections::HashSet;
+use std::iter;
 
-pub struct History {
-    prompts: Vec<models::Prompt>,
-}
+/// Decides which prompts to include in the LLM request.
+/// Always includes the latest prompt.
+/// The latest prompt is the one just inserted into the database.
+pub fn into_llm_prompt(db: &DbClient) -> Result<serde_json::Value> {
+    let mut prompts = db::select_prompts(
+        db,
+        db::SelectOpts {
+            limit: Some(setting::recent_history_limit(db)?),
+            order_by: Some(db::OrderBy::Desc),
+        },
+    )?;
 
-impl History {
-    /// Loads the most recent prompts from the database.
-    pub fn from(db: &DbClient) -> Result<Self> {
-        let prompts = db::select_prompts(
-            db,
-            db::SelectOpts {
-                limit: Some(setting::recent_history_limit(db)?),
-                order_by: Some(db::OrderBy::Desc),
-            },
-        )?;
+    let max_tokens = setting::max_tokens(db)?;
+    let min_score_to_include_prompt = setting::min_score_to_include_prompt(db)?;
 
-        Ok(Self { prompts })
+    // for score calc
+    let ζ = setting::expiring_id_discount(db)?;
+    let τ = setting::expiring_created_at_discount(db)?;
+    let φ = setting::len_discount(db)?;
+    let ξ = setting::karma_multiplier(db)?;
+
+    // is ordered by `id` DESC
+    let latest_id = *prompts[0].id;
+    let now = Utc::now();
+
+    // must be kept under `max_tokens`
+    let mut total_tokens = prompts.iter().map(|p| p.tokens).sum::<i32>();
+
+    let mut scores = prompts
+        .iter()
+        .filter_map(|prompt| {
+            let elapsed_minutes = now
+                .signed_duration_since(prompt.created_at())
+                .num_minutes()
+                .max(0);
+
+            let score = score(
+                prompt,
+                ScoreEqParams {
+                    elapsed_minutes,
+                    latest_id,
+                    ξ,
+                    τ,
+                    ζ,
+                    φ,
+                },
+            );
+
+            if min_score_to_include_prompt > score {
+                total_tokens -= prompt.tokens;
+                None
+            } else {
+                Some((prompt.id, prompt.tokens, score))
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if total_tokens > max_tokens {
+        scores.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a)); // DESC
+    }
+    // keep removing the lowest scoring prompts until we're under the limit
+    while total_tokens > max_tokens && scores.len() > 1 {
+        let (_, tokens, _) = scores.pop().unwrap();
+        total_tokens -= tokens;
     }
 
-    /// Decides which prompts to include in the LLM request.
-    /// Always includes the content prompt.
-    pub fn into_llm_prompt(
-        self,
-        db: &DbClient,
-        content: String,
-        content_tokens: i32,
-    ) -> Result<serde_json::Value> {
-        let Self { mut prompts } = self;
+    // remove all prompts that we decided not to include
+    let prompts_to_include: HashSet<_> = scores
+        .into_iter()
+        // always include the latest prompt
+        .chain(iter::once((PromptId(latest_id), 0, 0.0)))
+        .map(|(id, _, _)| id)
+        .collect();
+    prompts.retain(|p| prompts_to_include.contains(&p.id));
 
-        let max_tokens = setting::max_tokens(db)?;
-        let min_score_to_include_prompt =
-            setting::min_score_to_include_prompt(db)?;
+    debug!(
+        "Included history IDs: {:?}",
+        prompts.iter().map(|p| p.id).collect::<Vec<_>>()
+    );
 
-        // for score calc
-        let ζ = setting::expiring_id_discount(db)?;
-        let τ = setting::expiring_created_at_discount(db)?;
-        let φ = setting::len_discount(db)?;
-        let ξ = setting::karma_multiplier(db)?;
-
-        // is ordered by `id` DESC
-        let latest_id = *prompts[0].id;
-        let now = Utc::now();
-
-        // must be kept under `max_tokens`
-        let mut total_tokens =
-            content_tokens + prompts.iter().map(|p| p.tokens).sum::<i32>();
-
-        let mut scores = prompts
-            .iter()
-            .filter_map(|prompt| {
-                let elapsed_minutes = now
-                    .signed_duration_since(prompt.created_at())
-                    .num_minutes()
-                    .max(0);
-
-                let score = score(
-                    prompt,
-                    ScoreEqParams {
-                        elapsed_minutes,
-                        latest_id,
-                        ξ,
-                        τ,
-                        ζ,
-                        φ,
-                    },
-                );
-
-                if min_score_to_include_prompt > score {
-                    total_tokens -= prompt.tokens;
-                    None
-                } else {
-                    Some((prompt.id, prompt.tokens, score))
-                }
+    Ok(serde_json::Value::Array(
+        prompts
+            .into_iter()
+            .rev()
+            .map(|p| {
+                let mut prompt = serde_json::Map::new();
+                prompt.insert("role".to_string(), p.role.into());
+                prompt.insert("content".to_string(), p.content.into());
+                serde_json::Value::Object(prompt)
             })
-            .collect::<Vec<_>>();
-
-        if total_tokens > max_tokens {
-            scores.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a)); // DESC
-        }
-        // keep removing the lowest scoring prompts until we're under the limit
-        while total_tokens > max_tokens && scores.len() > 1 {
-            let (_, tokens, _) = scores.pop().unwrap();
-            total_tokens -= tokens;
-        }
-
-        // remove all prompts that we decided not to include
-        let prompts_to_include: HashSet<_> =
-            scores.into_iter().map(|(id, _, _)| id).collect();
-        prompts.retain(|p| prompts_to_include.contains(&p.id));
-
-        debug!(
-            "Included history IDs: {:?}",
-            prompts.iter().map(|p| p.id).collect::<Vec<_>>()
-        );
-
-        Ok(serde_json::Value::Array(
-            prompts
-                .into_iter()
-                .rev()
-                .chain(iter::once(models::Prompt {
-                    role: "user".to_string(),
-                    content,
-                    ..Default::default()
-                }))
-                .map(|p| {
-                    let mut prompt = serde_json::Map::new();
-                    prompt.insert("role".to_string(), p.role.into());
-                    prompt.insert("content".to_string(), p.content.into());
-                    serde_json::Value::Object(prompt)
-                })
-                .collect(),
-        ))
-    }
+            .collect(),
+    ))
 }
 
 struct ScoreEqParams {
