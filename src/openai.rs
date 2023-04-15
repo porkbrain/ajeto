@@ -30,7 +30,7 @@ pub async fn respond_to(
         .json(&json!({
             "model": model,
             "messages": prompt,
-            "stop": params.stop,
+            "stop": if params.stop.is_empty() { None } else { Some(params.stop) },
         }))
         .send()
         .await?;
