@@ -92,10 +92,10 @@ The length of a prompt (in tokens) affects the score negatively.
 
 We use following settings to scale the effects of each respectively mentioned parameter:
 
-- `Κ` as `karma_multiplier` (eg. 10)
-- `Τ` as `expiring_created_at_discount` (eg. 300.0)
-- `Ρ` as `expiring_id_discount` (eg. 3.0)
-- `Φ` as `len_discount` (eg. 0.01)
+- `ξ` as `karma_multiplier` (eg. 10)
+- `τ` as `expiring_created_at_discount` (eg. 300.0)
+- `ζ` as `expiring_id_discount` (eg. 3.0)
+- `φ` as `len_discount` (eg. 0.01)
 
 The score equation where
 `n` is the latest prompt,
@@ -105,10 +105,10 @@ The score equation where
 
 ```
 s_i =
-    (Κ k_i)
-    (1 / ( Φ |i| ))
-    (1 / ( Τ t_i ))
-    (1 / ( Ρ (n - i) ))
+    (ξ k_i)
+    min( 1 , (1 / ( φ |i| )) )
+    min( 1 , (1 / ( τ t_i )) )
+    min( 1 , (1 / ( ζ (n - i) )) )
 ```
 
 ## Configuration
