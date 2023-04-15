@@ -70,7 +70,8 @@ pub enum Mode {
     },
     /// For when I want it to code, I use directive _"cobol"_.
     Cobol,
-    /// For when I want to be explicit about history, I use directive _"annus"_.
+    /// For when I want to be explicit about history, I use directive
+    /// _"annus"_.
     Annus,
 }
 

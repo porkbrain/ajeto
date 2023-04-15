@@ -9,7 +9,6 @@ pub struct Conf {
     pub openai_api_key: String,
 
     // these have defaults
-    //
     #[serde(default = "defaults::sql_conn")]
     pub sql_conn: String,
     #[serde(default = "defaults::http_addr")]
