@@ -1,7 +1,7 @@
 //! Defines which prompts to include with each LLM request for context.
 
 use crate::{models::PromptId, prelude::*};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::iter;
 
@@ -17,29 +17,9 @@ pub fn into_llm_prompt(db: &DbClient) -> Result<serde_json::Value> {
         },
     )?;
 
-    let mut scores = scores_above_threshold(db, &prompts)?;
-    let mut total_tokens = scores.iter().map(|(_, t, _)| t).sum::<i32>();
-
-    let max_tokens = setting::max_tokens(db)?;
-    if total_tokens > max_tokens {
-        scores.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a)); // DESC
-    }
-    // keep removing the lowest scoring prompts until we're under the limit
-    while total_tokens > max_tokens && scores.len() > 1 {
-        let (_, tokens, _) = scores.pop().unwrap();
-        total_tokens -= tokens;
-    }
-
-    // is ordered by `id` DESC
-    let latest_id = *prompts[0].id;
-    // remove all prompts that we decided not to include
-    let prompts_to_include: HashSet<_> = scores
-        .into_iter()
-        // always include the latest prompt
-        .chain(iter::once((PromptId(latest_id), 0, 0.0)))
-        .map(|(id, _, _)| id)
-        .collect();
-    prompts.retain(|p| prompts_to_include.contains(&p.id));
+    let now = Utc::now();
+    let scores = scores_above_threshold(db, &prompts, now)?;
+    retain_best_scored_prompts(db, &mut prompts, scores)?;
 
     debug!(
         "Included history IDs: {:?}",
@@ -65,6 +45,7 @@ pub fn into_llm_prompt(db: &DbClient) -> Result<serde_json::Value> {
 fn scores_above_threshold(
     db: &DbClient,
     prompts: &[models::Prompt],
+    now: DateTime<Utc>,
 ) -> Result<Vec<(models::PromptId, i32, f32)>> {
     let min_score_to_include_prompt = setting::min_score_to_include_prompt(db)?;
 
@@ -74,7 +55,6 @@ fn scores_above_threshold(
     let φ = setting::len_discount(db)?;
     let ξ = setting::karma_multiplier(db)?;
 
-    let now = Utc::now();
     // is ordered by `id` DESC
     let latest_id = *prompts[0].id;
 
@@ -105,6 +85,38 @@ fn scores_above_threshold(
             }
         })
         .collect())
+}
+
+/// Keep removing prompts until we're under the max_tokens limit.
+fn retain_best_scored_prompts(
+    db: &DbClient,
+    prompts: &mut Vec<models::Prompt>,
+    mut scores: Vec<(models::PromptId, i32, f32)>,
+) -> Result<()> {
+    let mut total_tokens = scores.iter().map(|(_, t, _)| t).sum::<i32>();
+
+    let max_tokens = setting::max_tokens(db)?;
+    if total_tokens > max_tokens {
+        scores.sort_by(|(_, _, a), (_, _, b)| b.total_cmp(a)); // DESC
+    }
+    // keep removing the lowest scoring prompts until we're under the limit
+    while total_tokens > max_tokens && scores.len() > 1 {
+        let (_, tokens, _) = scores.pop().unwrap();
+        total_tokens -= tokens;
+    }
+
+    // is ordered by `id` DESC
+    let latest_id = *prompts[0].id;
+    // remove all prompts that we decided not to include
+    let prompts_to_include: HashSet<_> = scores
+        .into_iter()
+        // always include the latest prompt
+        .chain(iter::once((PromptId(latest_id), 0, 0.0)))
+        .map(|(id, _, _)| id)
+        .collect();
+    prompts.retain(|p| prompts_to_include.contains(&p.id));
+
+    Ok(())
 }
 
 struct ScoreEqParams {
@@ -215,5 +227,34 @@ mod tests {
             prop_assert!(karma as f32 * ξ >= score);
             prop_assert!(score >= 0.0);
         }
+    }
+
+    #[test]
+    fn it_converts_db_prompts_into_llm_input() {
+        let db = db::client();
+        db.lock()
+            .unwrap()
+            .execute_batch(include_str!("../tests/assets/db-1.sql"))
+            .expect("Cannot load test db sql");
+
+        let mut prompts = db::select_prompts(
+            &db,
+            db::SelectOpts {
+                limit: None,
+                order_by: Some(db::OrderBy::Desc),
+            },
+        )
+        .unwrap();
+
+        let now = prompts[0].created_at();
+        let scores = scores_above_threshold(&db, &prompts, now).unwrap();
+        retain_best_scored_prompts(&db, &mut prompts, scores).unwrap();
+
+        let gotten_prompts = prompts.iter().map(|p| *p.id).collect::<Vec<_>>();
+        let expected_prompts = [
+            87, 86, 85, 84, 83, 82, 81, 80, 79, 77, 76, 75, 74, 73, 72, 71, 68,
+            67, 66, 63, 59,
+        ];
+        assert_eq!(gotten_prompts, expected_prompts);
     }
 }

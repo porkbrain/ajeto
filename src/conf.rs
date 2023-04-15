@@ -2,7 +2,11 @@
 
 use crate::prelude::*;
 use serde_derive::Deserialize;
-use std::{net::SocketAddr, path::PathBuf};
+use std::{
+    net::SocketAddr,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Conf {
@@ -42,11 +46,11 @@ impl Conf {
         Ok(cfg.try_deserialize()?)
     }
 
-    pub fn db(&self) -> Result<DbConn> {
+    pub fn db(&self) -> Result<DbClient> {
         let mut conn = DbConn::open(&self.sql_conn)?;
         db::migrations().to_latest(&mut conn)?;
 
-        Ok(conn)
+        Ok(Arc::new(Mutex::new(conn)))
     }
 }
 

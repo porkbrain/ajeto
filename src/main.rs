@@ -16,10 +16,7 @@ mod prelude;
 use mode::Mode;
 use prelude::*;
 use serde_derive::{Deserialize, Serialize};
-use std::{
-    convert::Infallible,
-    sync::{Arc, Mutex},
-};
+use std::convert::Infallible;
 use warp::Filter;
 
 /// Definition of body for `POST /v1`
@@ -35,7 +32,7 @@ async fn main() -> Result<()> {
 
     let conf = Conf::from_env()?;
     let http_addr = conf.http_addr;
-    let db = Arc::new(Mutex::new(conf.db()?));
+    let db = conf.db()?;
 
     let recv_route = warp::path!("v1")
         .and(warp::post())
