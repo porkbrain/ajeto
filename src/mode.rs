@@ -205,10 +205,7 @@ impl Mode {
                 marat::process_llm_response(conf, db, response, thought_loop)
                     .await
             }
-            Self::Dali { .. } => Ok((
-                Self::process_input(db, response.to_string()).ok(),
-                Default::default(),
-            )),
+            Self::Dali { .. } => Ok((None, Default::default())),
             _ => todo!("cannot process response from this mode yet"),
         }
     }
