@@ -10,11 +10,11 @@ pub struct History {
 
 impl History {
     pub fn from(db: &DbClient) -> Result<Self> {
-        let prompts = select_prompts(
+        let prompts = db::select_prompts(
             db,
-            SelectOpts {
+            db::SelectOpts {
                 limit: Some(setting::recent_history_limit(db)?),
-                order_by: Some(OrderBy::Desc),
+                order_by: Some(db::OrderBy::Desc),
             },
         )?;
 
@@ -67,7 +67,7 @@ impl History {
                     let k = prompt.karma as f32 * karma_multiplier;
                     let score = i * m * l * k;
 
-                    // info!("{i:.4} * {m:.4} * {l:.4} * {k:.4} = {score:.4}");
+                    debug!("{i:.4} * {m:.4} * {l:.4} * {k:.4} = {score:.4}");
 
                     if min_score_to_include_prompt > score {
                         total_tokens -= prompt.tokens;
@@ -89,7 +89,7 @@ impl History {
             prompts.retain(|p| prompts_to_include.contains(&p.id));
         }
 
-        info!(
+        debug!(
             "Included history IDs: {:?}",
             prompts.iter().map(|p| p.id).collect::<Vec<_>>()
         );
@@ -114,106 +114,14 @@ impl History {
     }
 }
 
-pub fn insert_prompt(db: &DbClient, prompt: models::NewPrompt) -> Result<()> {
-    let db = db.lock().unwrap();
-    db.execute(
-        "INSERT INTO prompts (mode, role, content, karma, tokens) VALUES (?1, ?2, ?3, ?4, ?5)",
-        rusqlite::params![prompt.mode, prompt.role, prompt.content, prompt.karma, prompt.tokens],
-    )?;
-    Ok(())
-}
-
-pub fn latest_prompt(db: &DbClient) -> Result<models::Prompt> {
-    select_prompts(
-        db,
-        SelectOpts {
-            limit: Some(1),
-            order_by: Some(OrderBy::Desc),
-            ..Default::default()
-        },
-    )?
-    .into_iter()
-    .next()
-    .ok_or_else(|| anyhow!("No prompts found"))
-}
-
-pub fn update_prompt_karma(
-    db: &DbClient,
-    prompt_id: models::PromptId,
-    new_karma: i32,
-) -> Result<()> {
-    let db = db.lock().unwrap();
-    db.execute(
-        "UPDATE prompts SET karma = ?2 WHERE id = ?1;",
-        rusqlite::params![*prompt_id, new_karma],
-    )?;
-    Ok(())
-}
-
-pub enum OrderBy {
-    #[allow(dead_code)]
-    Asc,
-    Desc,
-}
-
-#[derive(Default)]
-pub struct SelectOpts {
-    pub limit: Option<usize>,
-    pub order_by: Option<OrderBy>,
-}
-
-pub fn select_prompts(
-    db: &DbClient,
-    opts: SelectOpts,
-) -> Result<Vec<models::Prompt>> {
-    let mut sql =
-        "SELECT id, mode, role, content, karma, tokens, created_at FROM prompts"
-            .to_string();
-
-    if let Some(order_by) = opts.order_by {
-        sql.push_str(" ORDER BY id ");
-        sql.push_str(match order_by {
-            OrderBy::Asc => "ASC",
-            OrderBy::Desc => "DESC",
-        });
-    }
-
-    if let Some(limit) = opts.limit {
-        sql.push_str(" LIMIT ");
-        sql.push_str(&limit.to_string());
-    }
-
-    db.lock()
-        .unwrap()
-        .prepare(&sql)?
-        .query_map([], |row| {
-            Ok(models::Prompt {
-                id: models::PromptId(row.get(0)?),
-                mode: row.get(1)?,
-                role: row.get(2)?,
-                content: row.get(3)?,
-                karma: row.get(4)?,
-                tokens: row.get(5)?,
-                created_at: row.get(6)?,
-            })
-        })?
-        .try_fold::<_, _, Result<Vec<models::Prompt>>>(vec![], |mut acc, p| {
-            acc.push(p?);
-            Ok(acc)
-        })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::conf;
     use regex::Regex;
 
     #[test]
     fn it_inserts_and_selects_prompt() {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        conf::migrations().to_latest(&mut db).unwrap();
-        let db = db_client(db);
+        let db = db::client();
 
         // inserts them
 
@@ -241,14 +149,15 @@ mod tests {
             },
         ];
         for prompt in prompts {
-            insert_prompt(&db, prompt).unwrap();
+            db::insert_prompt(&db, prompt).unwrap();
         }
 
         // selects them
 
-        let mut prompts_iter = select_prompts(&db, SelectOpts::default())
-            .unwrap()
-            .into_iter();
+        let mut prompts_iter =
+            db::select_prompts(&db, db::SelectOpts::default())
+                .unwrap()
+                .into_iter();
 
         let prompt = prompts_iter.next().unwrap();
         let first_id = *prompt.id;

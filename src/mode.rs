@@ -25,7 +25,7 @@
 /// Mode "marat" specific logic.
 mod marat;
 
-use crate::{history, prelude::*};
+use crate::prelude::*;
 use chrono::Utc;
 use lazy_static::lazy_static;
 use regex::Regex;
@@ -88,7 +88,7 @@ lazy_static! {
 impl Mode {
     pub fn as_str(&self) -> &'static str {
         match self {
-            Self::Marat { .. } => "marat",
+            Self::Marat { .. } => marat::MODE_STR,
             Self::Dali { .. } => "dali",
             Self::Annus => "annus",
             Self::Cobol => "cobol",
@@ -118,7 +118,7 @@ impl Mode {
         } else if DALI_RE.shortest_match(&input).is_some() {
             let prompt = DALI_RE.replace_all(&input, " ").to_string();
             return Ok(Self::Dali { prompt });
-        } else if let Ok(latest_prompt) = history::latest_prompt(db) {
+        } else if let Ok(latest_prompt) = db::latest_prompt(db) {
             let elapsed_seconds = Utc::now()
                 .signed_duration_since(latest_prompt.created_at())
                 .num_seconds()
@@ -131,7 +131,7 @@ impl Mode {
                             prompt: input.to_string(),
                         })
                     }
-                    "marat" => {
+                    marat::MODE_STR => {
                         return Ok(Self::Marat {
                             thought_loop: 0,
                             next_prompt: format!(
@@ -219,15 +219,13 @@ mod tests {
 
     #[test]
     fn it_constructs_marat() {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        crate::conf::migrations().to_latest(&mut db).unwrap();
-        let db = db_client(db);
+        let db = db::client();
 
         let tests = vec![
             (" there's \nmarat a rainbow", "there's  a rainbow"),
             ("\n   marat a rainbow", " a rainbow"),
             (
-                "ok marat heremarat no maratok marat",
+                "ok marat heremarat no maratok marat.",
                 "ok heremarat no maratok ",
             ),
             ("MaRat", " "),
@@ -250,9 +248,7 @@ mod tests {
 
     #[test]
     fn it_constructs_dali() {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        crate::conf::migrations().to_latest(&mut db).unwrap();
-        let db = db_client(db);
+        let db = db::client();
 
         let tests = vec![
             (" there's \ndali a rainbow", "there's  a rainbow"),

@@ -4,10 +4,7 @@
 //! * TODO: timeout the bash commands
 
 use super::Mode;
-use crate::{
-    history::{select_prompts, update_prompt_karma, OrderBy, SelectOpts},
-    prelude::*,
-};
+use crate::prelude::*;
 use lazy_static::lazy_static;
 use regex::Regex;
 use std::iter;
@@ -47,14 +44,14 @@ pub async fn process_llm_response(
         let decorative_karma = setting::decorative_karma(db)?;
         let contextual_karma = setting::contextual_karma(db)?;
         let instructive_karma = setting::instructive_karma(db)?;
-        let mut prompts = select_prompts(
+        let mut prompts = db::select_prompts(
             db,
-            SelectOpts {
+            db::SelectOpts {
                 // thought loop starts on zero => + 1
                 // buffer for err => +1
                 // each iteration of the loop has two prompts => *2
                 limit: Some((thought_loop + 2) * 2),
-                order_by: Some(OrderBy::Desc),
+                order_by: Some(db::OrderBy::Desc),
             },
         )?
         .into_iter()
@@ -73,7 +70,7 @@ pub async fn process_llm_response(
                 k => k / 5,
             };
 
-            update_prompt_karma(db, p.id, new_karma)?;
+            db::update_prompt_karma(db, p.id, new_karma)?;
         }
 
         Ok((

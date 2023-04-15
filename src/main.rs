@@ -1,5 +1,7 @@
 /// Deserializes `Conf` object from ENV variables.
 mod conf;
+/// All things database
+pub mod db;
 /// Defines which prompts to include with each LLM request for context.
 mod history;
 /// Mode determines decorators for prompt and LLM response interpretation.
@@ -30,7 +32,7 @@ struct JsonBody {
 #[tokio::main]
 async fn main() -> Result<()> {
     dotenv::dotenv().ok();
-    env_logger::builder().format_timestamp(None).init();
+    env_logger::builder().format_timestamp_millis().init();
 
     let conf = Conf::from_env()?;
     let http_addr = conf.http_addr;
@@ -103,7 +105,7 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
             openai::estimate_tokens(&immediate_prompt);
 
         // 4.
-        history::insert_prompt(
+        db::insert_prompt(
             &db,
             models::NewPrompt {
                 karma: params.user_prompt_karma,
@@ -131,7 +133,7 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
             mode.process_llm_response(&conf, &db, &response).await?;
 
         // 8.
-        history::insert_prompt(
+        db::insert_prompt(
             &db,
             models::NewPrompt {
                 karma: params.llm_response_karma,

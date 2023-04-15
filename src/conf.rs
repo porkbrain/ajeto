@@ -1,10 +1,8 @@
 //! Deserializes `Conf` object from ENV variables.
 
-use std::{net::SocketAddr, path::PathBuf};
-
 use crate::prelude::*;
-use rusqlite_migration::{Migrations, M};
 use serde_derive::Deserialize;
+use std::{net::SocketAddr, path::PathBuf};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Conf {
@@ -33,6 +31,23 @@ mod defaults {
 
     pub fn user_home_dir() -> PathBuf {
         "/home/ajeto".into()
+    }
+}
+
+impl Conf {
+    pub fn from_env() -> Result<Self> {
+        let cfg = config::Config::builder()
+            .add_source(config::Environment::default())
+            .build()?;
+
+        Ok(cfg.try_deserialize()?)
+    }
+
+    pub fn db(&self) -> Result<DbConn> {
+        let mut conn = DbConn::open(&self.sql_conn)?;
+        db::migrations().to_latest(&mut conn)?;
+
+        Ok(conn)
     }
 }
 
@@ -111,7 +126,7 @@ pub mod setting {
         Ok(fetch(db, "max_bash_output_len_for_response")?.parse()?)
     }
 
-    pub(super) fn fetch(db: &DbClient, name: &str) -> Result<String> {
+    fn fetch(db: &DbClient, name: &str) -> Result<String> {
         let db = db.lock().unwrap();
 
         let mut stmt =
@@ -121,99 +136,74 @@ pub mod setting {
 
         Ok(value)
     }
-}
 
-impl Conf {
-    pub fn from_env() -> Result<Self> {
-        let cfg = config::Config::builder()
-            .add_source(config::Environment::default())
-            .build()?;
+    #[cfg(test)]
+    mod tests {
+        use super::*;
 
-        Ok(cfg.try_deserialize()?)
-    }
+        #[test]
+        fn it_loads_settings_ok() -> Result<()> {
+            let db = db::client();
 
-    pub fn db(&self) -> Result<DbConn> {
-        let mut conn = DbConn::open(&self.sql_conn)?;
-        migrations().to_latest(&mut conn)?;
+            let openai_chat_endpoint = setting::openai_chat_endpoint(&db)?;
+            let max_thought_loops = setting::max_thought_loops(&db)?;
+            let openai_model = setting::openai_model(&db)?;
+            let default_prompt = setting::default_prompt(&db)?;
+            let recent_history_limit = setting::recent_history_limit(&db)?;
+            let max_tokens = setting::max_tokens(&db)?;
+            let min_score_to_include_prompt =
+                setting::min_score_to_include_prompt(&db)?;
+            let default_karma = setting::default_karma(&db)?;
+            let instructive_karma = setting::instructive_karma(&db)?;
+            let contextual_karma = setting::contextual_karma(&db)?;
+            let _expiring_id_discount = setting::expiring_id_discount(&db)?;
+            let _expiring_created_at_discount =
+                setting::expiring_created_at_discount(&db)?;
+            let _len_discount = setting::len_discount(&db)?;
+            let _karma_multiplier = setting::karma_multiplier(&db)?;
 
-        Ok(conn)
-    }
-}
+            assert_eq!(
+                openai_chat_endpoint.to_string(),
+                setting::fetch(&db, "openai_chat_endpoint")?
+            );
+            assert_eq!(
+                max_thought_loops.to_string(),
+                setting::fetch(&db, "max_thought_loops")?
+            );
+            assert_eq!(
+                openai_model.to_string(),
+                setting::fetch(&db, "openai_model")?
+            );
+            assert_eq!(
+                default_prompt.to_string(),
+                setting::fetch(&db, "default_prompt")?
+            );
+            assert_eq!(
+                recent_history_limit.to_string(),
+                setting::fetch(&db, "recent_history_limit")?
+            );
+            assert_eq!(
+                max_tokens.to_string(),
+                setting::fetch(&db, "max_tokens")?
+            );
+            assert_eq!(
+                min_score_to_include_prompt.to_string(),
+                setting::fetch(&db, "min_score_to_include_prompt")?
+            );
+            assert_eq!(
+                default_karma.to_string(),
+                setting::fetch(&db, "default_karma")?
+            );
+            assert_eq!(
+                instructive_karma.to_string(),
+                setting::fetch(&db, "instructive_karma")?
+            );
+            assert_eq!(
+                contextual_karma.to_string(),
+                setting::fetch(&db, "contextual_karma")?
+            );
 
-pub fn migrations() -> Migrations<'static> {
-    Migrations::new(vec![M::up(include_str!("../migrations/0001.up.sql"))])
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn migrations_test() {
-        assert!(migrations().validate().is_ok());
-    }
-
-    #[test]
-    fn it_loads_settings_ok() -> Result<()> {
-        let mut db = rusqlite::Connection::open_in_memory().unwrap();
-        migrations().to_latest(&mut db).unwrap();
-        let db = db_client(db);
-
-        let openai_chat_endpoint = setting::openai_chat_endpoint(&db)?;
-        let max_thought_loops = setting::max_thought_loops(&db)?;
-        let openai_model = setting::openai_model(&db)?;
-        let default_prompt = setting::default_prompt(&db)?;
-        let recent_history_limit = setting::recent_history_limit(&db)?;
-        let max_tokens = setting::max_tokens(&db)?;
-        let min_score_to_include_prompt =
-            setting::min_score_to_include_prompt(&db)?;
-        let default_karma = setting::default_karma(&db)?;
-        let instructive_karma = setting::instructive_karma(&db)?;
-        let contextual_karma = setting::contextual_karma(&db)?;
-        let _expiring_id_discount = setting::expiring_id_discount(&db)?;
-        let _expiring_created_at_discount =
-            setting::expiring_created_at_discount(&db)?;
-        let _len_discount = setting::len_discount(&db)?;
-        let _karma_multiplier = setting::karma_multiplier(&db)?;
-
-        assert_eq!(
-            openai_chat_endpoint.to_string(),
-            setting::fetch(&db, "openai_chat_endpoint")?
-        );
-        assert_eq!(
-            max_thought_loops.to_string(),
-            setting::fetch(&db, "max_thought_loops")?
-        );
-        assert_eq!(
-            openai_model.to_string(),
-            setting::fetch(&db, "openai_model")?
-        );
-        assert_eq!(
-            default_prompt.to_string(),
-            setting::fetch(&db, "default_prompt")?
-        );
-        assert_eq!(
-            recent_history_limit.to_string(),
-            setting::fetch(&db, "recent_history_limit")?
-        );
-        assert_eq!(max_tokens.to_string(), setting::fetch(&db, "max_tokens")?);
-        assert_eq!(
-            min_score_to_include_prompt.to_string(),
-            setting::fetch(&db, "min_score_to_include_prompt")?
-        );
-        assert_eq!(
-            default_karma.to_string(),
-            setting::fetch(&db, "default_karma")?
-        );
-        assert_eq!(
-            instructive_karma.to_string(),
-            setting::fetch(&db, "instructive_karma")?
-        );
-        assert_eq!(
-            contextual_karma.to_string(),
-            setting::fetch(&db, "contextual_karma")?
-        );
-
-        Ok(())
+            Ok(())
+        }
     }
 }
