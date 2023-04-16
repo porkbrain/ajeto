@@ -35,6 +35,7 @@ async fn main() -> Result<()> {
     let db = conf.db()?;
 
     // a dirty hack to make sure that only one request is processed at a time
+    // TODO: use a detached thread and a mpsc channel
     type Sequencer = Arc<tokio::sync::Mutex<()>>;
 
     let recv_route = warp::path!("v1")
@@ -121,7 +122,7 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
         let llm_prompt = history::into_llm_prompt(&db)?;
 
         // 5.
-        let response =
+        let (response_tokens, response) =
             openai::respond_to(&conf, &db, params, llm_prompt).await?;
 
         // 6.
@@ -135,7 +136,7 @@ async fn recv(conf: Conf, db: DbClient, input: String) -> Result<()> {
             models::NewPrompt {
                 karma: params.llm_response_karma,
                 mode: current_mode,
-                tokens: openai::estimate_tokens(&response),
+                tokens: response_tokens as i32,
                 role: "assistant",
                 content: &response,
             },
