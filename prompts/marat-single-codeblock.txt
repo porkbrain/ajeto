@@ -1,0 +1,2 @@
+Rewrite the "Action:" with single ```bash code block of bash commands which achieve the thought.
+Do not include prose. Do use non-interactive mode `-y` where relevant

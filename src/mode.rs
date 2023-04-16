@@ -62,10 +62,7 @@ pub enum Mode {
     Marat {
         /// What to append to the chat messages next.
         next_prompt: String,
-        /// Useful to know because the first prompt should have higher karma.
-        ///
-        /// A higher karma means that the first prompt is going to be included
-        /// as context longer.
+        next_prompt_karma: i32,
         thought_loop: usize,
     },
     /// For when I want it to code, I use directive _"cobol"_.
@@ -101,13 +98,12 @@ impl Mode {
         let input = input.trim();
 
         if MARAT_RE.shortest_match(&input).is_some() {
-            let task = MARAT_RE.replace_all(&input, " ").to_string();
             return Ok(Self::Marat {
                 thought_loop: 0,
-                next_prompt: format!(
-                    include_str!("../prompts/marat-tao.txt"),
-                    input = task,
-                    system = setting::system(db)?
+                next_prompt_karma: setting::instructive_karma(db)?,
+                next_prompt: marat::prompts::tao_instruction(
+                    MARAT_RE.replace_all(&input, " ").to_string(),
+                    setting::system(db)?,
                 ),
             });
         } else if COBOL_RE.shortest_match(&input).is_some() {
@@ -135,10 +131,10 @@ impl Mode {
                     marat::MODE_STR => {
                         return Ok(Self::Marat {
                             thought_loop: 0,
-                            next_prompt: format!(
-                                include_str!("../prompts/marat-tao.txt"),
-                                input = input,
-                                system = setting::system(db)?
+                            next_prompt_karma: setting::instructive_karma(db)?,
+                            next_prompt: marat::prompts::tao_instruction(
+                                input,
+                                setting::system(db)?,
                             ),
                         });
                     }
@@ -169,16 +165,13 @@ impl Mode {
         match self {
             Mode::Marat {
                 next_prompt,
-                thought_loop,
+                next_prompt_karma,
+                ..
             } => Ok((
                 next_prompt.clone(),
                 models::ImmediatePromptParams {
                     stop: vec!["Observation:".to_string()],
-                    user_prompt_karma: if *thought_loop == 0 {
-                        setting::instructive_karma(db)?
-                    } else {
-                        setting::default_karma(db)?
-                    },
+                    user_prompt_karma: *next_prompt_karma,
                     ..Default::default()
                 },
             )),
@@ -233,10 +226,10 @@ mod tests {
             assert_eq!(
                 Mode::process_input(&db, i.to_string()).unwrap(),
                 Mode::Marat {
-                    next_prompt: format!(
-                        include_str!("../prompts/marat-tao.txt"),
-                        input = o,
-                        system = setting::system(&db).unwrap()
+                    next_prompt_karma: setting::instructive_karma(&db).unwrap(),
+                    next_prompt: marat::prompts::tao_instruction(
+                        o,
+                        setting::system(&db).unwrap()
                     ),
                     thought_loop: 0,
                 }

@@ -1,12 +1,13 @@
 Use the following format:
 
-Question: the input question or task you must answer
-Thought: comment on what to do next to achieve the Question
-Action: produce {system} bash commands to achieve the Thought. Do include the commands in a ```bash code block. Do not include prose. non-interactive mode `-y`
-Observation: the result of the action
-... (this Thought/Action/Observation repeats until you are sure that the task is done)
-Final Thought: comment on how the Question is answered and done?
+Question: the input question or task I instruct you to answer
+Thought: you comment on what to do next to achieve the Question
+Action: you produce {system} bash commands to achieve the Thought. Do include the commands in a single ```bash code block. Do not include prose. non-interactive mode `-y`
+Observation: I provide the result of the action
+... (this Thought/Action/Observation format repeats until you are sure that the task is done)
+Final Thought: you comment on how the Question is answered and done
 
+Do no derail from the format above.
 Begin!
 
 Question: {input}
