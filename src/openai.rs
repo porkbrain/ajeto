@@ -19,7 +19,7 @@ pub async fn respond_to(
     db: &DbClient,
     params: models::ImmediatePromptParams,
     prompt: serde_json::Value,
-) -> Result<String> {
+) -> Result<(usize, String)> {
     let chat_endpoint = setting::openai_chat_endpoint(db)?;
     let model = setting::openai_model(db)?;
 
@@ -39,9 +39,29 @@ pub async fn respond_to(
     let message = completion["choices"][0]["message"]["content"]
         .as_str()
         .ok_or_else(|| {
-            anyhow!("No response in OpenAI response: {completion:#?}")
+            anyhow!("No choices[0].message.content in OpenAI response: {completion:#?}")
         })?
         .to_string();
 
-    Ok(message)
+    let prompt_tokens = completion["usage"]["prompt_tokens"]
+        .as_u64()
+        .ok_or_else(|| {
+            anyhow!(
+                "No usage.prompt_tokens in OpenAI response: {completion:#?}"
+            )
+        })?;
+    let total_tokens = completion["usage"]["total_tokens"]
+        .as_u64()
+        .ok_or_else(|| {
+            anyhow!("No usage.total_tokens in OpenAI response: {completion:#?}")
+        })?;
+
+    if message.trim().is_empty() {
+        warn!("Empty response from OpenAI: {completion:#?}")
+    }
+
+    Ok((
+        total_tokens.checked_sub(prompt_tokens).unwrap_or(0) as usize,
+        message,
+    ))
 }
