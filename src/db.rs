@@ -51,7 +51,7 @@ pub fn update_prompt_karma(
 pub fn update_latest_prompt_karma(db: &DbClient, new_karma: i32) -> Result<()> {
     let db = db.lock().unwrap();
     db.execute(
-        "UPDATE prompts SET karma = ?2 ORDER BY id DESC LIMIT 1;",
+        "UPDATE prompts SET karma = ?1 ORDER BY id DESC LIMIT 1;",
         rusqlite::params![new_karma],
     )?;
     Ok(())
