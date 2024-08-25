@@ -75,7 +75,7 @@ The input to an LLM is limited.
 Karma points are awarded to prompts to heuristically rank their value.
 A decision on whether some history should be included is made based on a sorted list.
 
-The framework upon which karma works categorized prompts in this order of importance:
+The framework upon which karma works categorizes prompts in this order of importance:
 
 - **operative**; user explicitly promoted it
 - **instructive**; the system considers it crucial information
